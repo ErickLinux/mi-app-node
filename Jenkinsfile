@@ -3,7 +3,7 @@ pipeline {
   environment {
     PROJECT_NAME    = 'mi-app-node'
     PROJECT_VERSION = "${env.BUILD_NUMBER}"
-    DTRACK_URL      = 'http://localhost:8080'  // ✅ Cambiado a puerto 8080
+    DTRACK_URL      = 'http://localhost:8080'
     DTRACK_API_KEY  = credentials('dtrack_api_key')
   }
   stages {
@@ -29,7 +29,6 @@ pipeline {
           ).trim()
           echo "✅ npm ${npmVersion}"
           
-          // Verificar que Dependency Track esté accesible
           echo "🔗 URL de Dependency Track: ${env.DTRACK_URL}"
         }
       }
@@ -50,8 +49,8 @@ pipeline {
         bat 'npx @cyclonedx/cyclonedx-npm --output-file bom.json --output-format json'
         bat 'if not exist bom.json (echo ERROR: bom.json no encontrado && exit 1)'
         
-        // Verificar contenido del BOM
-        bat 'type bom.json | head -5'
+        // Verificar contenido del BOM (comando Windows)
+        bat 'type bom.json | find /v "" | find /v "" | find /v "" | find /v "" | find /v ""'
       }
     }
 
@@ -62,14 +61,14 @@ pipeline {
           writeFile file: 'test-connection.ps1', text: """
 try {
     \$response = Invoke-WebRequest -Uri "${env.DTRACK_URL}/api/version" -Method Get -ErrorAction Stop
-    echo "✅ Dependency Track está respondiendo: Status Code \$(\$response.StatusCode)"
-    echo "📋 Response: \$(\$response.Content)"
+    Write-Host "✅ Dependency Track está respondiendo: Status Code \$(\$response.StatusCode)"
+    Write-Host "📋 Response: \$(\$response.Content)"
 } catch {
-    echo "❌ No se puede conectar a Dependency Track: \$($_.Exception.Message)"
-    echo "💡 Verifica que:"
-    echo "   - Dependency Track esté ejecutándose en ${env.DTRACK_URL}"
-    echo "   - El puerto 8080 esté accesible"
-    echo "   - La URL sea correcta"
+    Write-Host "❌ No se puede conectar a Dependency Track: \$(\$_.Exception.Message)"
+    Write-Host "💡 Verifica que:"
+    Write-Host "   - Dependency Track esté ejecutándose en ${env.DTRACK_URL}"
+    Write-Host "   - El puerto 8080 esté accesible"
+    Write-Host "   - La URL sea correcta"
     exit 1
 }
 """
