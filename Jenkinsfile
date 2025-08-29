@@ -31,9 +31,7 @@ pipeline {
                 script {
                     writeFile file: 'test-api.ps1', text: """
 try {
-    \$response = Invoke-RestMethod -Uri "${env.DTRACK_URL}/api/version" \`
-        -Headers @{"X-Api-Key" = "${env.DTRACK_API_KEY}"} \`
-        -Method Get
+    \$response = Invoke-RestMethod -Uri "${env.DTRACK_URL}/api/version" -Headers @{"X-Api-Key" = "${env.DTRACK_API_KEY}"} -Method Get
     Write-Host "✅ Dependency Track API respondiendo: Versión \$(\$response)"
 } catch {
     Write-Host "❌ Error conectando a Dependency Track API: \$(\$_.Exception.Message)"
@@ -63,10 +61,7 @@ try {
 
 try {
     Write-Host "📤 Subiendo BOM a Dependency Track..."
-    \$response = Invoke-RestMethod -Uri '${env.DTRACK_URL}/api/v1/bom' \`
-        -Method POST \`
-        -Headers @{ 'X-Api-Key' = \$apiKey; 'Content-Type' = 'application/json' } \`
-        -Body \$body
+    \$response = Invoke-RestMethod -Uri '${env.DTRACK_URL}/api/v1/bom' -Method POST -Headers @{ 'X-Api-Key' = \$apiKey; 'Content-Type' = 'application/json' } -Body \$body
     Write-Host "✅ BOM subido exitosamente. Token: \$(\$response.token)"
 } catch {
     Write-Host "❌ Error subiendo BOM: \$(\$_.Exception.Message)"
@@ -96,30 +91,30 @@ try {
                 script {
                     writeFile file: 'generate-report.ps1', text: """
 # Crear reporte de seguridad
-\$md = "# 🔍 Reporte de Análisis de Seguridad\n\n"
-\$md += "## 📋 Información del Proyecto\n\n"
-\$md += "- **Proyecto:** ${env.PROJECT_NAME}\n"
-\$md += "- **Versión:** ${env.PROJECT_VERSION}\n"
-\$md += "- **Build Number:** ${env.BUILD_NUMBER}\n"
-\$md += "- **Fecha:** \$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')\n\n"
-\$md += "## 🛡️  Herramientas Utilizadas\n\n"
-\$md += "- **Dependency Track:** Análisis de vulnerabilidades\n"
-\$md += "- **CycloneDX:** Generación de BOM (Bill of Materials)\n"
-\$md += "- **Pandoc:** Generación de reportes\n"
-\$md += "- **Jenkins:** Automatización del pipeline\n\n"
-\$md += "## ✅ Resultados del Análisis\n\n"
-\$md += "- ✅ BOM generado exitosamente\n"
-\$md += "- ✅ BOM subido a Dependency Track\n"
-\$md += "- ✅ Análisis de vulnerabilidades completado\n"
-\$md += "- 📊 Reporte generado automáticamente\n\n"
-\$md += "## 📊 Próximos Pasos\n\n"
-\$md += "1. Revisar el dashboard de Dependency Track\n"
-\$md += "2. Identificar vulnerabilidades críticas\n"
-\$md += "3. Actualizar dependencias vulnerables\n"
-\$md += "4. Implementar parches de seguridad\n"
-\$md += "5. Programar análisis periódicos\n\n"
-\$md += "---\n\n"
-\$md += "*Reporte generado automáticamente por Jenkins Pipeline*"
+\$md = "# Reporte de Analisis de Seguridad"
+\$md += "## Informacion del Proyecto"
+\$md += "- **Proyecto:** ${env.PROJECT_NAME}"
+\$md += "- **Version:** ${env.PROJECT_VERSION}"
+\$md += "- **Build Number:** ${env.BUILD_NUMBER}"
+\$md += "- **Fecha:** \$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+\$md += "## Herramientas Utilizadas"
+\$md += "- **Dependency Track:** Analisis de vulnerabilidades"
+\$md += "- **CycloneDX:** Generacion de BOM (Bill of Materials)"
+\$md += "- **Pandoc:** Generacion de reportes"
+\$md += "- **Jenkins:** Automatizacion del pipeline"
+\$md += "## Resultados del Analisis"
+\$md += "- ✅ BOM generado exitosamente"
+\$md += "- ✅ BOM subido a Dependency Track"
+\$md += "- ✅ Analisis de vulnerabilidades completado"
+\$md += "- 📊 Reporte generado automaticamente"
+\$md += "## Proximos Pasos"
+\$md += "1. Revisar el dashboard de Dependency Track"
+\$md += "2. Identificar vulnerabilidades criticas"
+\$md += "3. Actualizar dependencias vulnerables"
+\$md += "4. Implementar parches de seguridad"
+\$md += "5. Programar analisis periodicos"
+\$md += "---"
+\$md += "*Reporte generado automaticamente por Jenkins Pipeline*"
 
 # Guardar markdown
 Set-Content -Path "security-report.md" -Value \$md -Encoding UTF8
