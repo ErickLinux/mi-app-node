@@ -51,15 +51,26 @@ pipeline {
 
     stage('Upload SBOM to Dependency-Track') {
       steps {
+        // Usando parámetros válidos para el plugin Dependency Track
         dependencyTrackPublisher(
           artifact: 'bom.json',
           projectName: env.PROJECT_NAME,
           projectVersion: env.PROJECT_VERSION,
           autoCreateProjects: true,
-          synchronous: true,
-          waitForResults: true,
-          failOnError: false
+          synchronous: true
+          // waitForResults y failOnError no son parámetros válidos en esta versión
         )
+      }
+    }
+
+    stage('Wait for Analysis Completion') {
+      steps {
+        script {
+          // Esperar manualmente para que el análisis se complete
+          echo '⏳ Esperando que Dependency Track complete el análisis...'
+          sleep time: 60, unit: 'SECONDS' // Esperar 60 segundos
+          echo '✅ Análisis debería estar completo'
+        }
       }
     }
 
@@ -86,7 +97,9 @@ try {
     
 } catch {
     Write-Host "❌ Error: $($_.Exception.Message)"
-    Write-Host "Detalles: $($_.ErrorDetails.Message)"
+    if ($_.ErrorDetails.Message) {
+        Write-Host "Detalles: $($_.ErrorDetails.Message)"
+    }
     exit 1
 }
 '''
@@ -112,14 +125,14 @@ $f = Get-Content $findingsFile -Raw | ConvertFrom-Json
 $proj = $f.project
 
 # Crear contenido Markdown
-$md = "# 🔍 Informe de Analisis de Vulnerabilidades\n\n"
+$md = "# Informe de Analisis de Vulnerabilidades\n\n"
 $md += "**Proyecto:** $($proj.name)\n\n"
 $md += "**Version:** $($proj.version)\n\n"
 $md += "**Fecha del Analisis:** $(Get-Date -Format \"yyyy-MM-dd HH:mm:ss\")\n\n"
 $md += "**Herramienta:** Dependency Track + Jenkins + Pandoc\n\n"
 
 # Resumen por severidad
-$md += "## 📈 Resumen por Nivel de Severidad\n\n"
+$md += "## Resumen por Nivel de Severidad\n\n"
 $counts = @{}
 foreach ($i in $f.findings) {
     $sev = if ($i.vulnerability.severity) { $i.vulnerability.severity } else { \"UNASSIGNED\" }
@@ -129,19 +142,12 @@ foreach ($i in $f.findings) {
 $severityOrder = @(\"CRITICAL\",\"HIGH\",\"MEDIUM\",\"LOW\",\"UNASSIGNED\")
 foreach ($k in $severityOrder) {
     if ($counts.ContainsKey($k)) { 
-        $icon = switch ($k) {
-            \"CRITICAL\" { \"🔴\" }
-            \"HIGH\"     { \"🟠\" }
-            \"MEDIUM\"   { \"🟡\" }
-            \"LOW\"      { \"🟢\" }
-            default    { \"⚪\" }
-        }
-        $md += \"$icon **$k**: $($counts[$k]) vulnerabilidades\n\" 
+        $md += \"- **$k**: $($counts[$k]) vulnerabilidades\n\" 
     }
 }
 
 # Tabla de hallazgos detallados
-$md += \"\n## 📋 Detalle de Hallazgos\n\n\"
+$md += \"\n## Detalle de Hallazgos\n\n\"
 $md += \"| Componente | Vulnerabilidad | Severidad | CVSS | URL |\n\"
 $md += \"|------------|----------------|-----------|------|-----|\n\"
 
@@ -164,7 +170,7 @@ foreach ($i in $f.findings) {
 }
 
 # Recomendaciones
-$md += \"\n## 💡 Recomendaciones Generales\n\n\"
+$md += \"\n## Recomendaciones Generales\n\n\"
 $md += \"- **Priorizar** la remediacion de vulnerabilidades CRITICAL y HIGH\n\"
 $md += \"- **Actualizar** dependencias a las versiones mas recientes\n\"
 $md += \"- **Revisar** advisories oficiales de cada componente\n\"
