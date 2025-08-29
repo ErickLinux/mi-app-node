@@ -29,24 +29,25 @@ pipeline {
         stage('Test API Connection') {
             steps {
                 script {
-                    writeFile file: 'test-api.ps1', text: """
-\$headers = @{
-    "X-Api-Key" = "${env.DTRACK_API_KEY}"
+                    // Crear script PowerShell sin caracteres problemáticos
+                    writeFile file: 'test-api.ps1', text: '''
+$headers = @{
+    "X-Api-Key" = "' + env.DTRACK_API_KEY + '"
     "Content-Type" = "application/json"
 }
 
 try {
-    \$response = Invoke-RestMethod -Uri "${env.DTRACK_URL}/api/version" -Headers \$headers -Method Get
-    Write-Host "✅ API Connection Successful. Version: \$response"
+    $response = Invoke-RestMethod -Uri "' + env.DTRACK_URL + '/api/version" -Headers $headers -Method Get
+    Write-Host "✅ API Connection Successful. Version: $response"
 } catch {
-    Write-Host "❌ API Connection Failed: \$($_.Exception.Message)"
+    Write-Host "❌ API Connection Failed: $($_.Exception.Message)"
     Write-Host "💡 Please check:"
     Write-Host "   - Dependency Track is running"
-    Write-Host "   - API Key is correct and starts with 'dt_'"
+    Write-Host "   - API Key is correct"
     Write-Host "   - Network connectivity"
     exit 1
 }
-"""
+'''
                     bat 'powershell -ExecutionPolicy Bypass -File test-api.ps1'
                 }
             }
@@ -55,36 +56,36 @@ try {
         stage('Upload BOM to Dependency Track') {
             steps {
                 script {
-                    writeFile file: 'upload-bom.ps1', text: """
-\$headers = @{
-    "X-Api-Key" = "${env.DTRACK_API_KEY}"
+                    writeFile file: 'upload-bom.ps1', text: '''
+$headers = @{
+    "X-Api-Key" = "' + env.DTRACK_API_KEY + '"
     "Content-Type" = "application/json"
 }
 
-\$bomContent = Get-Content -Path 'bom.json' -Raw
-\$bytes = [System.Text.Encoding]::UTF8.GetBytes(\$bomContent)
-\$encodedBom = [Convert]::ToBase64String(\$bytes)
+$bomContent = Get-Content -Path "bom.json" -Raw
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($bomContent)
+$encodedBom = [Convert]::ToBase64String($bytes)
 
-\$body = @{
-    projectName = '${env.PROJECT_NAME}'
-    projectVersion = '${env.PROJECT_VERSION}'
-    autoCreate = \$true
-    bom = \$encodedBom
+$body = @{
+    projectName = "' + env.PROJECT_NAME + '"
+    projectVersion = "' + env.PROJECT_VERSION + '"
+    autoCreate = $true
+    bom = $encodedBom
 } | ConvertTo-Json
 
 try {
     Write-Host "📤 Uploading BOM to Dependency Track..."
-    \$response = Invoke-RestMethod -Uri "${env.DTRACK_URL}/api/v1/bom" -Headers \$headers -Method Post -Body \$body
-    Write-Host "✅ BOM Upload Successful. Token: \$(\$response.token)"
-    Write-Host "🌐 View results at: ${env.DTRACK_URL}/projects/\$(\$response.token)"
+    $response = Invoke-RestMethod -Uri "' + env.DTRACK_URL + '/api/v1/bom" -Headers $headers -Method Post -Body $body
+    Write-Host "✅ BOM Upload Successful. Token: $($response.token)"
+    Write-Host "🌐 View results at: ' + env.DTRACK_URL + '/projects/$($response.token)"
 } catch {
-    Write-Host "❌ BOM Upload Failed: \$($_.Exception.Message)"
-    if (\$_.ErrorDetails.Message) {
-        Write-Host "Error Details: \$(\$_.ErrorDetails.Message)"
+    Write-Host "❌ BOM Upload Failed: $($_.Exception.Message)"
+    if ($_.ErrorDetails.Message) {
+        Write-Host "Error Details: $($_.ErrorDetails.Message)"
     }
     exit 1
 }
-"""
+'''
                     bat 'powershell -ExecutionPolicy Bypass -File upload-bom.ps1'
                 }
             }
