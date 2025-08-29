@@ -3,7 +3,7 @@ pipeline {
     environment {
         PROJECT_NAME    = 'mi-app-node'
         PROJECT_VERSION = "${env.BUILD_NUMBER}"
-        DTRACK_URL      = 'http://localhost:8080'   // Dependency-Track en puerto 8080
+        DTRACK_URL      = 'http://localhost:8080'   // Puerto Dependency-Track
         DTRACK_API_KEY  = credentials('dtrack_api_key')
     }
     stages {
@@ -31,9 +31,7 @@ pipeline {
                     projectName: PROJECT_NAME,
                     projectVersion: PROJECT_VERSION,
                     autoCreateProjects: true,
-                    synchronous: true,
-                    url: "${DTRACK_URL}",
-                    apiKey: "${DTRACK_API_KEY}"
+                    synchronous: true
                 )
             }
         }
@@ -59,21 +57,25 @@ powershell -Command ^
 powershell -Command ^
   $f = Get-Content findings.json -Raw | ConvertFrom-Json; ^
   $proj = $f.project; ^
-  $md = \"# Informe de Vulnerabilidades - Dependency-Track`n`n**Proyecto:** ${proj.name}  `n**Versión:** ${proj.version}  `n**Fecha:** $(Get-Date -Format o)`n`n## Resumen por severidad`n\" ; ^
+  $fecha = Get-Date -Format o; ^
+  $md = \"# Informe de Vulnerabilidades - Dependency-Track`n`n\" + ^
+        \"**Proyecto:** ${proj.name}`n\" + ^
+        \"**Versión:** ${proj.version}`n\" + ^
+        \"**Fecha:** $fecha`n`n## Resumen por severidad`n\"; ^
   $counts = @{}; ^
-  foreach ($i in $f.findings) { $sev = ($i.vulnerability.severity) ; if (-not $sev) { $sev = 'UNASSIGNED' }; if ($counts.ContainsKey($sev)) { $counts[$sev]++ } else { $counts[$sev]=1 } } ; ^
-  foreach ($k in @('CRITICAL','HIGH','MEDIUM','LOW','UNASSIGNED')) { if ($counts.ContainsKey($k)) { $md += \"- $k: $($counts[$k])`n\" } } ; ^
-  $md += \"`n## Hallazgos`n| Componente | Vulnerabilidad | Severidad | CVSS | URL |`n|---|---|---|---|---|`n\" ; ^
+  foreach ($i in $f.findings) { $sev = ($i.vulnerability.severity); if (-not $sev) { $sev='UNASSIGNED'}; if ($counts.ContainsKey($sev)) { $counts[$sev]++ } else { $counts[$sev]=1 } } ^
+  foreach ($k in @('CRITICAL','HIGH','MEDIUM','LOW','UNASSIGNED')) { if ($counts.ContainsKey($k)) { $md += \"- $k: $($counts[$k])`n\" } } ^
+  $md += \"`n## Hallazgos`n| Componente | Vulnerabilidad | Severidad | CVSS | URL |`n|---|---|---|---|---|`n\"; ^
   foreach ($i in $f.findings) { ^
     $comp = $i.component; $v = $i.vulnerability; ^
     $name = \"$($comp.name)@$($comp.version)\" -replace '\\|','\\|'; ^
     $vuln = \"$($v.source)-$($v.vulnId)\" -replace '\\|','\\|'; ^
     $sev = ($v.severity) -replace '\\|','\\|'; ^
-    $score = $v.cvssV3BaseScore; if (-not $score) { $score = $v.cvssV2BaseScore } ; ^
+    $score = $v.cvssV3BaseScore; if (-not $score) { $score = $v.cvssV2BaseScore }; ^
     $url = $v.url; ^
-    $md += \"| $name | $vuln | $sev | $score | $url |`n\" ; ^
-  } ; ^
-  $md += \"`n## Recomendaciones generales`n- Priorizar CRITICAL/HIGH y actualizar dependencias. `n- Revisar advisory y notas del componente.`n\" ; ^
+    $md += \"| $name | $vuln | $sev | $score | $url |`n\" ^
+  }; ^
+  $md += \"`n## Recomendaciones generales`n- Priorizar CRITICAL/HIGH y actualizar dependencias.`n- Revisar advisory y notas del componente.`n\"; ^
   Set-Content -Path reporte.md -Value $md -Encoding UTF8; ^
   Write-Output 'reporte.md creado';
 """
