@@ -3,17 +3,42 @@ pipeline {
   environment {
     PROJECT_NAME    = 'mi-app-node'
     PROJECT_VERSION = "${env.BUILD_NUMBER}"
-    DTRACK_URL      = 'http://localhost:8081'  // ¡Cambié a 8081! Dependency Track usa 8081 por defecto
+    DTRACK_URL      = 'http://localhost:8081'
     DTRACK_API_KEY  = credentials('dtrack_api_key')
   }
   stages {
+    stage('Verify Tools') {
+      steps {
+        script {
+          echo '🔍 Verificando herramientas instaladas...'
+          def pandocVersion = bat(
+            script: 'pandoc --version',
+            returnStdout: true
+          ).trim().split('\n')[0]
+          echo "✅ ${pandocVersion}"
+          
+          def nodeVersion = bat(
+            script: 'node --version',
+            returnStdout: true
+          ).trim()
+          echo "✅ Node.js ${nodeVersion}"
+          
+          def npmVersion = bat(
+            script: 'npm --version',
+            returnStdout: true
+          ).trim()
+          echo "✅ npm ${npmVersion}"
+        }
+      }
+    }
+
     stage('Checkout') {
       steps { checkout scm }
     }
 
     stage('Build (npm)') {
       steps {
-        bat 'npm ci'
+        bat 'npm ci --no-audit'
       }
     }
 
@@ -41,36 +66,27 @@ pipeline {
     stage('Export Findings (via API)') {
       steps {
         script {
-          // Crear archivo PowerShell separado y ejecutarlo
           writeFile file: 'export-findings.ps1', text: '''
 $apiKey = $env:DTRACK_API_KEY
 $dtrackUrl = $env:DTRACK_URL
 $projectName = $env:PROJECT_NAME
 $projectVersion = $env:PROJECT_VERSION
 
-Write-Host "Buscando proyecto: $projectName version: $projectVersion"
-
-# Lookup del proyecto
+Write-Host "🔍 Buscando proyecto: $projectName version: $projectVersion"
 $lookupUrl = "${dtrackUrl}/api/v1/project/lookup?name=${projectName}&version=${projectVersion}"
-Write-Host "URL de lookup: $lookupUrl"
 
 try {
     $lookup = Invoke-RestMethod -Headers @{ 'X-Api-Key' = $apiKey } -Uri $lookupUrl -Method Get
-    Write-Host "Proyecto encontrado: $($lookup.name) - $($lookup.version)"
-    
     $uuid = $lookup.uuid
-    Write-Host "UUID del proyecto: $uuid"
+    Write-Host "✅ Proyecto encontrado - UUID: $uuid"
     
-    # Exportar findings
     $exportUrl = "${dtrackUrl}/api/v1/finding/project/${uuid}/export"
-    Write-Host "Exportando findings desde: $exportUrl"
-    
     Invoke-RestMethod -Headers @{ 'X-Api-Key' = $apiKey } -OutFile findings.json -Uri $exportUrl -Method Get
-    Write-Host "findings.json descargado exitosamente"
+    Write-Host "✅ findings.json descargado exitosamente"
     
 } catch {
-    Write-Host "Error: $($_.Exception.Message)"
-    Write-Host "Response: $($_.ErrorDetails.Message)"
+    Write-Host "❌ Error: $($_.Exception.Message)"
+    Write-Host "Detalles: $($_.ErrorDetails.Message)"
     exit 1
 }
 '''
@@ -80,90 +96,101 @@ try {
       }
     }
 
-    stage('Generate Report (Markdown → HTML/PDF)') {
+    stage('Generate Report with Pandoc') {
       steps {
         script {
           writeFile file: 'generate-report.ps1', text: '''
-# Script para generar reporte
+# Script para generar reporte con Pandoc
 $findingsFile = "findings.json"
 if (-not (Test-Path $findingsFile)) {
-    Write-Host "ERROR: findings.json no encontrado"
+    Write-Host "❌ ERROR: findings.json no encontrado"
     exit 1
 }
 
+Write-Host "📊 Procesando findings.json..."
 $f = Get-Content $findingsFile -Raw | ConvertFrom-Json
 $proj = $f.project
 
-$md = "# Informe de Vulnerabilidades - Dependency-Track`n`n"
-$md += "**Proyecto:** $($proj.name)`n`n"
-$md += "**Versión:** $($proj.version)`n`n"
-$md += "**Fecha:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n`n"
-$md += "## Resumen por severidad`n`n"
+# Crear contenido Markdown
+$md = "# 🔍 Informe de Analisis de Vulnerabilidades\n\n"
+$md += "**Proyecto:** $($proj.name)\n\n"
+$md += "**Version:** $($proj.version)\n\n"
+$md += "**Fecha del Analisis:** $(Get-Date -Format \"yyyy-MM-dd HH:mm:ss\")\n\n"
+$md += "**Herramienta:** Dependency Track + Jenkins + Pandoc\n\n"
 
-# Contar vulnerabilidades por severidad
+# Resumen por severidad
+$md += "## 📈 Resumen por Nivel de Severidad\n\n"
 $counts = @{}
 foreach ($i in $f.findings) {
-    $sev = if ($i.vulnerability.severity) { $i.vulnerability.severity } else { 'UNASSIGNED' }
-    if ($counts.ContainsKey($sev)) { 
-        $counts[$sev]++ 
-    } else { 
-        $counts[$sev] = 1 
-    }
+    $sev = if ($i.vulnerability.severity) { $i.vulnerability.severity } else { \"UNASSIGNED\" }
+    if ($counts.ContainsKey($sev)) { $counts[$sev]++ } else { $counts[$sev] = 1 }
 }
 
-# Ordenar por severidad
-$severityOrder = @('CRITICAL','HIGH','MEDIUM','LOW','UNASSIGNED')
+$severityOrder = @(\"CRITICAL\",\"HIGH\",\"MEDIUM\",\"LOW\",\"UNASSIGNED\")
 foreach ($k in $severityOrder) {
     if ($counts.ContainsKey($k)) { 
-        $md += "- $k`: $($counts[$k])`n" 
+        $icon = switch ($k) {
+            \"CRITICAL\" { \"🔴\" }
+            \"HIGH\"     { \"🟠\" }
+            \"MEDIUM\"   { \"🟡\" }
+            \"LOW\"      { \"🟢\" }
+            default    { \"⚪\" }
+        }
+        $md += \"$icon **$k**: $($counts[$k]) vulnerabilidades\n\" 
     }
 }
 
-$md += "`n## Hallazgos`n`n"
-$md += "| Componente | Vulnerabilidad | Severidad | CVSS | URL |`n"
-$md += "|------------|----------------|-----------|------|-----|`n"
+# Tabla de hallazgos detallados
+$md += \"\n## 📋 Detalle de Hallazgos\n\n\"
+$md += \"| Componente | Vulnerabilidad | Severidad | CVSS | URL |\n\"
+$md += \"|------------|----------------|-----------|------|-----|\n\"
 
 foreach ($i in $f.findings) {
     $comp = $i.component
     $v = $i.vulnerability
     
-    $name = "$($comp.name)@$($comp.version)" -replace '\|','\\|'
-    $vuln = "$($v.source)-$($v.vulnId)" -replace '\|','\\|'
-    $sev = if ($v.severity) { $v.severity } else { 'UNASSIGNED' }
+    # Escapar pipes para markdown
+    $name = \"$($comp.name)@$($comp.version)\".Replace(\"|\", \"&#124;\")
+    $vuln = \"$($v.source)-$($v.vulnId)\".Replace(\"|\", \"&#124;\")
+    $sev = if ($v.severity) { $v.severity } else { \"UNASSIGNED\" }
     
     $score = if ($v.cvssV3BaseScore) { $v.cvssV3BaseScore } 
              elseif ($v.cvssV2BaseScore) { $v.cvssV2BaseScore } 
-             else { 'N/A' }
+             else { \"N/A\" }
     
-    $url = if ($v.url) { $v.url } else { 'N/A' }
+    $url = if ($v.url) { $v.url } else { \"N/A\" }
     
-    $md += "| $name | $vuln | $sev | $score | $url |`n"
+    $md += \"| $name | $vuln | $sev | $score | $url |\n\"
 }
 
-$md += "`n## Recomendaciones generales`n`n"
-$md += "- Priorizar la remediación de vulnerabilidades CRITICAL y HIGH`n"
-$md += "- Actualizar las dependencias a las versiones más recientes`n"
-$md += "- Revisar los advisories y notas de cada componente vulnerables`n"
-$md += "- Considerar componentes alternativos si las vulnerabilidades son críticas`n"
+# Recomendaciones
+$md += \"\n## 💡 Recomendaciones Generales\n\n\"
+$md += \"- **Priorizar** la remediacion de vulnerabilidades CRITICAL y HIGH\n\"
+$md += \"- **Actualizar** dependencias a las versiones mas recientes\n\"
+$md += \"- **Revisar** advisories oficiales de cada componente\n\"
+$md += \"- **Considerar** componentes alternativos si las vulnerabilidades son criticas\n\"
+$md += \"- **Monitorear** continuamente las dependencias del proyecto\n\"
 
-Set-Content -Path "reporte.md" -Value $md -Encoding UTF8
-Write-Host "reporte.md creado exitosamente"
+# Guardar markdown
+Set-Content -Path \"reporte.md\" -Value $md -Encoding UTF8
+Write-Host \"✅ reporte.md creado exitosamente\"
 
-# Convertir a HTML y PDF si Pandoc está disponible
+# Generar PDF con Pandoc
 try {
-    # HTML
-    pandoc reporte.md -o reporte.html
-    Write-Host "reporte.html generado"
-} catch {
-    Write-Host "No se pudo generar HTML: $($_.Exception.Message)"
-}
-
-try {
-    # PDF
+    Write-Host \"📄 Generando PDF con Pandoc...\"
     pandoc reporte.md -o reporte.pdf --pdf-engine=xelatex
-    Write-Host "reporte.pdf generado"
+    Write-Host \"✅ reporte.pdf generado exitosamente\"
 } catch {
-    Write-Host "No se pudo generar PDF: $($_.Exception.Message)"
+    Write-Host \"❌ Error generando PDF: $($_.Exception.Message)\"
+}
+
+# Generar HTML tambien
+try {
+    Write-Host \"🌐 Generando HTML...\"
+    pandoc reporte.md -o reporte.html
+    Write-Host \"✅ reporte.html generado exitosamente\"
+} catch {
+    Write-Host \"❌ Error generando HTML: $($_.Exception.Message)\"
 }
 '''
           bat 'powershell -ExecutionPolicy Bypass -File generate-report.ps1'
@@ -178,10 +205,11 @@ try {
       cleanWs()
     }
     success {
-      echo 'Pipeline ejecutado exitosamente!'
+      echo '✅ Pipeline ejecutado exitosamente!'
+      echo '📦 Artefactos disponibles para descarga'
     }
     failure {
-      echo 'Pipeline falló. Revisar logs para detalles.'
+      echo '❌ Pipeline falló. Revisar logs para detalles.'
     }
   }
 }
