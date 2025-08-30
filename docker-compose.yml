@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  dtrack-apiserver:
+    image: dependencytrack/apiserver:latest
+    container_name: dtrack-apiserver
+    ports:
+      - "8081:8080"   # API expuesta en host:8081 -> contenedor:8080
+    restart: unless-stopped
+
+  dtrack-frontend:
+    image: dependencytrack/frontend:latest
+    container_name: dtrack-frontend
+    environment:
+      - API_BASE_URL=http://localhost:8081
+    ports:
+      - "8080:8080"   # UI en host:8080
+    restart: unless-stopped
