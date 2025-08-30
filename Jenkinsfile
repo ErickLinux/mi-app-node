@@ -1,91 +1,96 @@
 pipeline {
-    agent any
-    environment {
-        PROJECT_NAME = 'mi-app-node'
-        PROJECT_VERSION = "${env.BUILD_NUMBER}"
+  agent any
+  environment {
+    PROJECT_NAME    = 'mi-app-node'               // Cámbialo si quieres
+    PROJECT_VERSION = "${env.BUILD_NUMBER}"
+    DTRACK_URL      = 'http://localhost:8081'
+    DTRACK_API_KEY  = credentials('dtrack_api_key')
+  }
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
     }
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
 
-        stage('Install Dependencies') {
-            steps {
-                bat 'npm install'
-            }
-        }
-
-        stage('Generate BOM') {
-            steps {
-                bat 'npx @cyclonedx/cyclonedx-npm --output-file bom.json'
-                bat 'if exist bom.json (echo ✅ BOM generado) else (echo ❌ Error generando BOM && exit 1)'
-            }
-        }
-
-        stage('Create Security Report') {
-            steps {
-                script {
-                    // Crear un reporte básico sin Dependency Track
-                    bat """
-                    echo # Reporte de Analisis de Seguridad > reporte.md
-                    echo ## Proyecto: ${env.PROJECT_NAME} >> reporte.md
-                    echo ## Version: ${env.PROJECT_VERSION} >> reporte.md
-                    echo ## Build: ${env.BUILD_NUMBER} >> reporte.md
-                    echo ## Fecha: %DATE% %TIME% >> reporte.md
-                    echo. >> reporte.md
-                    echo ### Resultados del Analisis >> reporte.md
-                    echo - ✅ BOM generado exitosamente >> reporte.md
-                    echo - 📋 Lista de dependencias creada >> reporte.md
-                    echo - 🔍 Listo para analisis de vulnerabilidades >> reporte.md
-                    echo. >> reporte.md
-                    echo ### Próximos Pasos >> reporte.md
-                    echo 1. Revisar el BOM en Dependency Track >> reporte.md
-                    echo 2. Identificar vulnerabilidades >> reporte.md
-                    echo 3. Actualizar dependencias >> reporte.md
-                    echo 4. Ejecutar análisis periódicos >> reporte.md
-                    """
-                    
-                    // Generar PDF
-                    bat 'pandoc reporte.md -o reporte.pdf --pdf-engine=xelatex'
-                    
-                    // Generar HTML
-                    bat 'pandoc reporte.md -o reporte.html'
-                }
-            }
-        }
-
-        stage('Manual Dependency Track Upload') {
-            steps {
-                script {
-                    echo '📋 Para completar el análisis:'
-                    echo '1. Abre http://localhost:8080 en tu navegador'
-                    echo '2. Ve a Projects → Create Project'
-                    echo '3. Nombre: mi-app-node'
-                    echo '4. Sube manualmente el archivo bom.json'
-                    echo '5. Revisa los resultados de vulnerabilidades'
-                }
-            }
-        }
+    stage('Build (npm)') {
+      steps {
+        bat 'npm ci'
+      }
     }
-    post {
-        always {
-            archiveArtifacts artifacts: 'bom.json, reporte.md, reporte.html, reporte.pdf', fingerprint: true
-            cleanWs()
-        }
-        success {
-            echo '✅ Pipeline completado exitosamente!'
-            echo '📦 Artefactos generados:'
-            echo '   - bom.json (Bill of Materials)'
-            echo '   - reporte.md (Reporte Markdown)'
-            echo '   - reporte.html (Reporte HTML)'
-            echo '   - reporte.pdf (Reporte PDF)'
-            echo '🌐 Abre http://localhost:8080 para analizar vulnerabilidades'
-        }
-        failure {
-            echo '❌ Pipeline falló'
-            echo '💡 Revisa los logs para detalles'
-        }
+
+    stage('Generate SBOM (CycloneDX)') {
+      steps {
+        // npx ejecuta el generador CycloneDX y produce bom.json
+        bat 'npx @cyclonedx/cyclonedx-npm --output-file bom.json --output-format json'
+        bat 'if not exist bom.json (echo ERROR: bom.json no encontrado && exit 1)'
+      }
     }
+
+    stage('Upload SBOM to Dependency-Track') {
+      steps {
+        // Usa el paso del plugin (necesitas tener el plugin instalado)
+        dependencyTrackPublisher(
+          artifact: 'bom.json',
+          projectName: PROJECT_NAME,
+          projectVersion: PROJECT_VERSION,
+          autoCreateProjects: true,
+          synchronous: true,
+          showResults: true
+        )
+      }
+    }
+
+    stage('Export Findings (via API)') {
+      steps {
+        // Usamos PowerShell para invocar la API y descargar findings.json
+        bat """
+powershell -Command ^
+  $env:APIKEY='${DTRACK_API_KEY}'; ^
+  $lookup = Invoke-RestMethod -Headers @{ 'X-Api-Key' = $env:APIKEY } -Uri '${DTRACK_URL}/api/v1/project/lookup?name=${PROJECT_NAME}&version=${PROJECT_VERSION}'; ^
+  if (-not $lookup) { Write-Error 'Project not found'; exit 1 } ^
+  $uuid = $lookup.uuid; ^
+  Invoke-RestMethod -Headers @{ 'X-Api-Key' = $env:APIKEY } -OutFile findings.json -Uri \"${DTRACK_URL}/api/v1/finding/project/$uuid/export\"; ^
+  Write-Output 'findings.json descargado';
+"""
+        bat 'if not exist findings.json (echo ERROR: findings.json no encontrado && exit 1)'
+      }
+    }
+
+    stage('Generate Report (Markdown → HTML/PDF)') {
+      steps {
+        // Convertimos findings.json en reporte.md y luego a HTML y PDF (si MikTeX está instalado)
+        bat """
+powershell -Command ^
+  $f = Get-Content findings.json -Raw | ConvertFrom-Json; ^
+  $proj = $f.project; ^
+  $md = \"# Informe de Vulnerabilidades - Dependency-Track`n`n**Proyecto:** $($proj.name)  `n**Versión:** $($proj.version)  `n**Fecha:** $(Get-Date -Format o)`n`n## Resumen por severidad`n\" ; ^
+  $counts = @{}; ^
+  foreach ($i in $f.findings) { $sev = ($i.vulnerability.severity) ; if (-not $sev) { $sev = 'UNASSIGNED' }; if ($counts.ContainsKey($sev)) { $counts[$sev]++ } else { $counts[$sev]=1 } } ; ^
+  foreach ($k in @('CRITICAL','HIGH','MEDIUM','LOW','UNASSIGNED')) { if ($counts.ContainsKey($k)) { $md += \"- $k: $($counts[$k])`n\" } } ; ^
+  $md += \"`n## Hallazgos`n| Componente | Vulnerabilidad | Severidad | CVSS | URL |`n|---|---|---|---|---|`n\" ; ^
+  foreach ($i in $f.findings) { ^
+    $comp = $i.component; $v = $i.vulnerability; ^
+    $name = \"$($comp.name)@$($comp.version)\" -replace '\\|','\\|'; ^
+    $vuln = \"$($v.source)-$($v.vulnId)\" -replace '\\|','\\|'; ^
+    $sev = ($v.severity) -replace '\\|','\\|'; ^
+    $score = $v.cvssV3BaseScore; if (-not $score) { $score = $v.cvssV2BaseScore } ; ^
+    $url = $v.url; ^
+    $md += \"| $name | $vuln | $sev | $score | $url |`n\" ; ^
+  } ; ^
+  $md += \"`n## Recomendaciones generales`n- Priorizar CRITICAL/HIGH y actualizar dependencias. `n- Revisar advisory y notas del componente.`n\" ; ^
+  Set-Content -Path reporte.md -Value $md -Encoding UTF8; ^
+  Write-Output 'reporte.md creado';
+"""
+        // Convertir con Pandoc (si está instalado)
+        bat 'pandoc reporte.md -o reporte.html || echo Pandoc HTML falló'
+        // Si MiKTeX / xelatex existe, generar PDF
+        bat 'pandoc reporte.md -o reporte.pdf --pdf-engine=xelatex || echo PDF no generado (falta LaTeX)'
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: 'bom.json, findings.json, reporte.*', fingerprint: true
+    }
+  }
 }
